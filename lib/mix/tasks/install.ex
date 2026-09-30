@@ -43,15 +43,36 @@ defmodule Mix.Tasks.Desktop.Install do
 
     {:ok, app_config_body} = File.read(path)
 
-    if String.contains?(app_config_body, replace_string) do
-      IO.puts("config.exs already modified, skipping...")
-    else
-      Owl.IO.puts([Owl.Data.tag("* updating ", :yellow), "config/config.exs"])
+    cond do
+      String.contains?(app_config_body, replace_string) ->
+        IO.puts("config.exs already modified, skipping...")
 
-      updated_app_config_body =
-        String.replace(app_config_body, "url: [host: \"localhost\"],", full_replace_string)
+      # A project's config.exs can already define its own `http:` key before
+      # this task runs (e.g. hand-copied from a disabled runtime.exs so the
+      # endpoint keeps a port after `rename_runtime_exs_if_needed/1` takes
+      # runtime.exs out of the picture). Blindly inserting a second `http:`
+      # key below used to silently create a duplicate-key config: Elixir's
+      # `Keyword.get/2` picks whichever one comes first, so the app can end
+      # up listening on neither the port this task intended, nor the one the
+      # project already had -- without erroring, so it's very easy to miss.
+      Regex.match?(~r/^\s*http:\s*\[/m, app_config_body) ->
+        Owl.IO.puts([
+          Owl.Data.tag("* skipping ", :red),
+          "config/config.exs: it already defines an `http:` key. ",
+          "Automatically adding another one would create a duplicate ",
+          "`http:` key (Elixir keyword lists silently keep only the first ",
+          "one on conflicts, which can leave the endpoint listening on an ",
+          "unexpected port). Please merge the following into your existing ",
+          "endpoint config by hand instead:\n\n#{full_replace_string}"
+        ])
 
-      File.write!(path, updated_app_config_body)
+      true ->
+        Owl.IO.puts([Owl.Data.tag("* updating ", :yellow), "config/config.exs"])
+
+        updated_app_config_body =
+          String.replace(app_config_body, "url: [host: \"localhost\"],", full_replace_string)
+
+        File.write!(path, updated_app_config_body)
     end
   end
 
